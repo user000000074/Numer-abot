@@ -1,106 +1,148 @@
-import os
 import logging
-from telegram import Update
-from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 import requests
-import asyncio
+from flask import Flask
+from telegram import Update
+from telegram.ext import Updater, CommandHandler, MessageHandler, Filters, CallbackContext
 
+# إعداد التسجيل
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 
-class MediaServiceBot:
+app = Flask(__name__)
+
+class TGLionBot:
     def __init__(self):
-        # التوكن مباشرة بدلاً من os.getenv
         self.token = "8485376998:AAFKQifErEDv4-g-IdRY3hoptD-jcCj3n2M"
         self.lion_api_key = "8w963myi1eCDm5jHxl"
+        self.api_url = "https://tg-lion.net/api/v1"
         
         self.required_channels = ['@nhkfjj']
         
+        # خدمات TG-Lion الحقيقية
         self.services = {
-            '1': {'name': 'متابعين تيك توك', 'id': '121', 'price': '5$ لكل 1000'},
-            '2': {'name': 'مشاهدات يوتيوب', 'id': '132', 'price': '3$ لكل 1000'},
-            '3': {'name': 'متابعين انستجرام', 'id': '145', 'price': '7$ لكل 1000'},
+            '1': {'name': 'حسابات تليجرام', 'category': 'accounts'},
+            '2': {'name': 'أرقام هاتف', 'category': 'phones'}, 
+            '3': {'name': 'خدمات سوشيال ميديا', 'category': 'social'},
+            '4': {'name': 'بوتات تليجرام', 'category': 'bots'},
+            '5': {'name': 'قنوات تليجرام', 'category': 'channels'}
         }
 
-    async def check_subscription(self, user_id: int, context: ContextTypes.DEFAULT_TYPE) -> bool:
+    def get_services_list(self):
+        """جلب قائمة الخدمات من TG-Lion API"""
+        try:
+            response = requests.get(f"{self.api_url}/services", headers={
+                "Authorization": f"Bearer {self.lion_api_key}"
+            })
+            if response.status_code == 200:
+                return response.json()
+            return None
+        except Exception as e:
+            logging.error(f"API Error: {e}")
+            return None
+
+    def create_order(self, service_id, quantity=1):
+        """إنشاء طلب جديد"""
+        try:
+            data = {
+                "service": service_id,
+                "quantity": quantity
+            }
+            response = requests.post(f"{self.api_url}/order", 
+                                   json=data,
+                                   headers={"Authorization": f"Bearer {self.lion_api_key}"})
+            return response.json()
+        except Exception as e:
+            logging.error(f"Order Error: {e}")
+            return None
+
+    def check_subscription(self, user_id: int, context: CallbackContext) -> bool:
+        """التحقق من الاشتراك في القناة"""
         try:
             for channel in self.required_channels:
-                member = await context.bot.get_chat_member(chat_id=channel, user_id=user_id)
-                if member.status in ['left', 'kicked']:
+                try:
+                    member = context.bot.get_chat_member(chat_id=channel, user_id=user_id)
+                    if member.status in ['left', 'kicked']:
+                        return False
+                except Exception as e:
+                    logging.error(f"Channel check error: {e}")
                     return False
             return True
         except Exception as e:
-            logging.error(f"Error checking subscription: {e}")
+            logging.error(f"Subscription error: {e}")
             return False
 
-    async def start(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+    def start(self, update: Update, context: CallbackContext):
+        """رسالة البدء"""
         user_id = update.effective_user.id
         
-        if not await self.check_subscription(user_id, context):
-            await update.message.reply_text(
-                "📢 **مرحباً! للاستفادة من خدماتنا، يرجى الاشتراك في قناتنا أولاً:**\n\n"
+        if not self.check_subscription(user_id, context):
+            update.message.reply_text(
+                "🦁 **مرحباً في TG-Lion Bot**\n\n"
+                "📢 للاستفادة من خدماتنا، يرجى الاشتراك في قناتنا أولاً:\n"
                 "• @nhkfjj\n\n"
-                "✅ بعد الاشتراك في القناة، أرسل /start مرة أخرى\n\n"
-                "🔗 رابط القناة: https://t.me/nhkfjj",
-                parse_mode='Markdown'
+                "✅ بعد الاشتراك أرسل /start مرة أخرى\n"
+                "🔗 https://t.me/nhkfjj"
             )
             return
+
+        services_text = "\n".join([f"{key}. {value['name']}" for key, value in self.services.items()])
         
-        services_text = "\n".join([f"{key}. {value['name']} - {value['price']}" for key, value in self.services.items()])
-        
-        await update.message.reply_text(
-            f"🎉 **مرحباً! تم التحقق من اشتراكك**\n\n"
-            f"📋 **الخدمات المتاحة:**\n{services_text}\n\n"
+        update.message.reply_text(
+            f"🎉 **مرحباً في TG-Lion!**\n\n"
+            f"🛍️ **الخدمات المتاحة:**\n{services_text}\n\n"
             f"📝 **كيفية الطلب:**\n"
-            f"أرسل رقم الخدمة + الرابط\n"
-            f"مثال: `1 https://tiktok.com/@username`",
-            parse_mode='Markdown'
+            f"أرسل رقم الخدمة\n"
+            f"مثال: `1`\n\n"
+            f"💼 **خدمات حصرية:**\n"
+            f"• حسابات تليجرام\n"
+            f"• أرقام هاتف\n" 
+            f"• بوتات وقنوات\n"
+            f"• خدمات سوشيال ميديا"
         )
 
-    async def handle_service_request(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+    def handle_service_selection(self, update: Update, context: CallbackContext):
+        """معالجة اختيار الخدمة"""
         user_id = update.effective_user.id
         user_message = update.message.text
         
-        if not await self.check_subscription(user_id, context):
-            await update.message.reply_text("❌ **يرجى الاشتراك في قناتنا أولاً**")
+        if not self.check_subscription(user_id, context):
+            update.message.reply_text("❌ **يرجى الاشتراك في القناة أولاً**")
             return
         
-        try:
-            parts = user_message.split()
-            if len(parts) < 2:
-                await update.message.reply_text("❌ **صيغة خاطئة**\nمثال: `1 https://tiktok.com/@username`")
-                return
+        if user_message in self.services:
+            service = self.services[user_message]
             
-            service_key = parts[0]
-            target_link = parts[1]
+            # جلب الخدمات الحقيقية من API
+            available_services = self.get_services_list()
             
-            if service_key not in self.services:
-                await update.message.reply_text("❌ **رقم خدمة غير صحيح**")
-                return
-            
-            service = self.services[service_key]
-            await update.message.reply_text("⏳ **جاري معالجة طلبك...**")
-            
-            await asyncio.sleep(2)
-            await update.message.reply_text(
-                f"✅ **تم استلام طلبك بنجاح!**\n\n"
-                f"📦 الخدمة: {service['name']}\n"
-                f"🔗 الرابط: {target_link}\n"
-                f"🧮 الكمية: 1000\n\n"
-                f"شكراً لثقتك! 🌟"
-            )
-                
-        except Exception as e:
-            logging.error(f"Error: {e}")
-            await update.message.reply_text("❌ **حدث خطأ**")
+            if available_services:
+                services_list = "\n".join([f"• {s['name']} - ${s['price']}" for s in available_services[:5]])
+                update.message.reply_text(
+                    f"📦 **{service['name']} - الخدمات المتاحة:**\n\n"
+                    f"{services_list}\n\n"
+                    f"🔢 أرسل رقم الخدمة المطلوبة"
+                )
+            else:
+                update.message.reply_text(
+                    f"🛒 **{service['name']}**\n\n"
+                    f"⏳ جاري جلب الخدمات المتاحة...\n"
+                    f"📞 للطلبات السريعة تواصل مع الدعم"
+                )
+        else:
+            update.message.reply_text("❌ **رقم خدمة غير صحيح**")
 
-    def run(self):
-        application = Application.builder().token(self.token).build()
-        application.add_handler(CommandHandler("start", self.start))
-        application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, self.handle_service_request))
+    def run_bot(self):
+        """تشغيل البوت"""
+        updater = Updater(self.token, use_context=True)
+        dispatcher = updater.dispatcher
         
-        logging.info("Bot is starting...")
-        application.run_polling()
+        dispatcher.add_handler(CommandHandler("start", self.start))
+        dispatcher.add_handler(MessageHandler(Filters.text & ~Filters.command, self.handle_service_selection))
+        
+        logging.info("🦁 TG-Lion Bot is starting...")
+        updater.start_polling()
+        return updater
 
+# تشغيل البوت
 if __name__ == '__main__':
-    bot = MediaServiceBot()
-    bot.run()
+    bot = TGLionBot()
+    bot.run_bot()
